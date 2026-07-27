@@ -11,15 +11,19 @@ const {
   ChannelType,
   Client,
   EmbedBuilder,
+  Events,
   GatewayIntentBits,
+  MessageFlags,
   PermissionFlagsBits,
   REST,
   Routes,
   SlashCommandBuilder,
 } = require('discord.js');
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
+const EPHEMERAL = MessageFlags.Ephemeral;
 const required = ['DISCORD_TOKEN', 'CLIENT_ID', 'GUILD_ID'];
+
 for (const name of required) {
   if (!process.env[name]) {
     console.error(`[CONFIG] ${name} fehlt in der .env-Datei.`);
@@ -73,12 +77,12 @@ function saveConfig() {
   writeJson('config.json', state.config);
 }
 
-function addTextChannelOption(builder, name, description, required = false) {
+function addTextChannelOption(builder, name, description, requiredOption = false) {
   return builder.addChannelOption(option => option
     .setName(name)
     .setDescription(description)
     .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
-    .setRequired(required));
+    .setRequired(requiredOption));
 }
 
 let setup = new SlashCommandBuilder()
@@ -90,51 +94,15 @@ let setup = new SlashCommandBuilder()
     .setDescription('Rolle nach Regelbestätigung')
     .setRequired(true));
 
-/*
- * Bei Discord müssen zuerst alle Pflichtfelder kommen.
- */
-setup = addTextChannelOption(
-  setup,
-  'regel_log',
-  'Kanal für Regelbestätigungen',
-  true,
-);
-
-setup = addTextChannelOption(
-  setup,
-  'whitelist_team',
-  'Teamkanal für Whitelist-Anträge',
-  true,
-);
-
-setup = addTextChannelOption(
-  setup,
-  'projekt_kanal',
-  'Kanal für Hier-baue-ich-Projekte',
-  true,
-);
-
-setup = addTextChannelOption(
-  setup,
-  'bot_log',
-  'Interner Bot-Logkanal',
-  true,
-);
-
-/*
- * Optionale Felder müssen danach stehen.
- */
+setup = addTextChannelOption(setup, 'regel_log', 'Kanal für Regelbestätigungen', true);
+setup = addTextChannelOption(setup, 'whitelist_team', 'Teamkanal für Whitelist-Anträge', true);
+setup = addTextChannelOption(setup, 'projekt_kanal', 'Kanal für Hier-baue-ich-Projekte', true);
+setup = addTextChannelOption(setup, 'bot_log', 'Interner Bot-Logkanal', true);
 setup = setup.addRoleOption(option => option
   .setName('whitelist_rolle')
   .setDescription('Optionale Rolle nach Whitelist-Annahme')
   .setRequired(false));
-
-setup = addTextChannelOption(
-  setup,
-  'content_kanal',
-  'Kanal für Content-Creator-Beiträge',
-  false,
-);
+setup = addTextChannelOption(setup, 'content_kanal', 'Kanal für Content-Creator-Beiträge', false);
 
 const commands = [
   setup,
@@ -174,6 +142,12 @@ const commands = [
   new SlashCommandBuilder()
     .setName('botinfo')
     .setDescription('Zeigt Informationen über den Planlos Create Bot.'),
+  new SlashCommandBuilder()
+    .setName('ping')
+    .setDescription('Zeigt die Reaktionszeit des Bots.'),
+  new SlashCommandBuilder()
+    .setName('hilfe')
+    .setDescription('Zeigt alle verfügbaren Befehle und Funktionen.'),
 ].map(command => command.toJSON());
 
 const client = new Client({
@@ -182,7 +156,10 @@ const client = new Client({
 
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-  await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID), { body: commands });
+  await rest.put(
+    Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
+    { body: commands },
+  );
   console.log(`[DISCORD] ${commands.length} Slash-Commands registriert.`);
 }
 
@@ -222,7 +199,9 @@ async function sendLog(guild, title, description, color = 0x5865f2) {
   const channelId = configured('BOT_LOG_CHANNEL_ID');
   const channel = channelId ? guild.channels.cache.get(channelId) : null;
   if (!channel?.isTextBased()) return;
-  await channel.send({ embeds: [new EmbedBuilder().setColor(color).setTitle(title).setDescription(description).setTimestamp()] }).catch(() => {});
+  await channel.send({
+    embeds: [new EmbedBuilder().setColor(color).setTitle(title).setDescription(description).setTimestamp()],
+  }).catch(() => {});
 }
 
 async function updateStatusMessage() {
@@ -238,37 +217,42 @@ function validMinecraftName(name) {
   return /^[A-Za-z0-9_]{3,16}$/.test(name);
 }
 
-client.once('ready', async () => {
-  console.log(`[DISCORD] Eingeloggt als ${client.user.tag}`);
-  await client.user.setPresence({ activities: [{ name: 'Planlos Create Server' }], status: 'online' });
+client.once(Events.ClientReady, async readyClient => {
+  console.log(`[DISCORD] Eingeloggt als ${readyClient.user.tag}`);
+  console.log(`[START] Planlos Create Bot v${VERSION} ist bereit.`);
+  await readyClient.user.setPresence({ activities: [{ name: 'Planlos Create Server' }], status: 'online' });
   await refreshMinecraftStatus();
 });
 
-client.on('interactionCreate', async interaction => {
+client.on(Events.InteractionCreate, async interaction => {
   try {
     if (interaction.isButton()) {
       if (interaction.customId === 'rules_accept') {
         const roleId = configured('VERIFIED_ROLE_ID');
-        if (!roleId) return interaction.reply({ content: 'Die Verifiziert-Rolle ist noch nicht eingerichtet.', ephemeral: true });
+        if (!roleId) return interaction.reply({ content: 'Die Verifiziert-Rolle ist noch nicht eingerichtet.', flags: EPHEMERAL });
         const role = interaction.guild.roles.cache.get(roleId);
-        if (!role) return interaction.reply({ content: 'Die konfigurierte Rolle wurde nicht gefunden.', ephemeral: true });
-        if (interaction.member.roles.cache.has(roleId)) return interaction.reply({ content: 'Du hast die Regeln bereits bestätigt.', ephemeral: true });
+        if (!role) return interaction.reply({ content: 'Die konfigurierte Rolle wurde nicht gefunden.', flags: EPHEMERAL });
+        if (interaction.member.roles.cache.has(roleId)) return interaction.reply({ content: 'Du hast die Regeln bereits bestätigt.', flags: EPHEMERAL });
         await interaction.member.roles.add(role, 'Regelwerk akzeptiert');
-        state.verifications[interaction.user.id] = { userId: interaction.user.id, username: interaction.user.username, acceptedAt: new Date().toISOString() };
+        state.verifications[interaction.user.id] = {
+          userId: interaction.user.id,
+          username: interaction.user.username,
+          acceptedAt: new Date().toISOString(),
+        };
         writeJson('verifications.json', state.verifications);
         const logId = configured('RULES_LOG_CHANNEL_ID');
         const logChannel = logId ? interaction.guild.channels.cache.get(logId) : null;
         if (logChannel?.isTextBased()) await logChannel.send(`✅ Regelwerk akzeptiert: <@${interaction.user.id}> (\`${interaction.user.id}\`)`);
         await sendLog(interaction.guild, 'Regelwerk bestätigt', `<@${interaction.user.id}> hat das Regelwerk akzeptiert.`, 0x35a854);
-        return interaction.reply({ content: 'Du hast das Regelwerk erfolgreich akzeptiert.', ephemeral: true });
+        return interaction.reply({ content: 'Du hast das Regelwerk erfolgreich akzeptiert.', flags: EPHEMERAL });
       }
 
       if (interaction.customId.startsWith('wl_accept:') || interaction.customId.startsWith('wl_reject:')) {
-        if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) return interaction.reply({ content: 'Dafür fehlen dir die Rechte.', ephemeral: true });
+        if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) return interaction.reply({ content: 'Dafür fehlen dir die Rechte.', flags: EPHEMERAL });
         const [action, requestId] = interaction.customId.split(':');
         const request = state.whitelist.find(entry => entry.id === requestId);
-        if (!request) return interaction.reply({ content: 'Der Antrag wurde nicht gefunden.', ephemeral: true });
-        if (request.status !== 'pending') return interaction.reply({ content: 'Dieser Antrag wurde bereits bearbeitet.', ephemeral: true });
+        if (!request) return interaction.reply({ content: 'Der Antrag wurde nicht gefunden.', flags: EPHEMERAL });
+        if (request.status !== 'pending') return interaction.reply({ content: 'Dieser Antrag wurde bereits bearbeitet.', flags: EPHEMERAL });
         request.status = action === 'wl_accept' ? 'accepted' : 'rejected';
         request.reviewedBy = interaction.user.id;
         request.reviewedAt = new Date().toISOString();
@@ -279,7 +263,9 @@ client.on('interactionCreate', async interaction => {
           const role = roleId ? interaction.guild.roles.cache.get(roleId) : null;
           if (role) await member.roles.add(role, 'Whitelist angenommen').catch(() => {});
         }
-        if (member) await member.send(request.status === 'accepted' ? `Dein Whitelist-Antrag für **${request.minecraftName}** wurde angenommen.` : `Dein Whitelist-Antrag für **${request.minecraftName}** wurde abgelehnt.`).catch(() => {});
+        if (member) await member.send(request.status === 'accepted'
+          ? `Dein Whitelist-Antrag für **${request.minecraftName}** wurde angenommen.`
+          : `Dein Whitelist-Antrag für **${request.minecraftName}** wurde abgelehnt.`).catch(() => {});
         const embed = EmbedBuilder.from(interaction.message.embeds[0])
           .setColor(request.status === 'accepted' ? 0x35a854 : 0xc0392b)
           .addFields({ name: 'Entscheidung', value: `${request.status === 'accepted' ? '✅ Angenommen' : '❌ Abgelehnt'} von <@${interaction.user.id}>` });
@@ -290,19 +276,21 @@ client.on('interactionCreate', async interaction => {
       if (interaction.customId.startsWith('project_done:') || interaction.customId.startsWith('project_delete:')) {
         const [action, projectId] = interaction.customId.split(':');
         const project = state.projects.find(entry => entry.id === projectId);
-        if (!project) return interaction.reply({ content: 'Projekt nicht gefunden.', ephemeral: true });
+        if (!project) return interaction.reply({ content: 'Projekt nicht gefunden.', flags: EPHEMERAL });
         const allowed = project.discordId === interaction.user.id || interaction.memberPermissions?.has(PermissionFlagsBits.ManageMessages);
-        if (!allowed) return interaction.reply({ content: 'Du kannst nur dein eigenes Projekt bearbeiten.', ephemeral: true });
+        if (!allowed) return interaction.reply({ content: 'Du kannst nur dein eigenes Projekt bearbeiten.', flags: EPHEMERAL });
         if (action === 'project_delete') {
           state.projects = state.projects.filter(entry => entry.id !== projectId);
           writeJson('projects.json', state.projects);
           await interaction.message.delete().catch(() => {});
-          return interaction.reply({ content: 'Projekt wurde gelöscht.', ephemeral: true });
+          return interaction.reply({ content: 'Projekt wurde gelöscht.', flags: EPHEMERAL });
         }
         project.status = 'Abgeschlossen';
         project.updatedAt = new Date().toISOString();
         writeJson('projects.json', state.projects);
-        const embed = EmbedBuilder.from(interaction.message.embeds[0]).setColor(0x35a854).spliceFields(1, 1, { name: 'Status', value: '✅ Abgeschlossen', inline: true });
+        const embed = EmbedBuilder.from(interaction.message.embeds[0])
+          .setColor(0x35a854)
+          .spliceFields(1, 1, { name: 'Status', value: '✅ Abgeschlossen', inline: true });
         return interaction.update({ embeds: [embed], components: [] });
       }
     }
@@ -321,12 +309,18 @@ client.on('interactionCreate', async interaction => {
         BOT_LOG_CHANNEL_ID: interaction.options.getChannel('bot_log', true).id,
       };
       saveConfig();
-      return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x35a854).setTitle('✅ Bot-Setup gespeichert').setDescription('Rollen und Kanäle wurden erfolgreich eingerichtet.')], ephemeral: true });
+      return interaction.reply({
+        embeds: [new EmbedBuilder()
+          .setColor(0x35a854)
+          .setTitle('✅ Bot-Setup gespeichert')
+          .setDescription('Rollen und Kanäle wurden erfolgreich eingerichtet.')],
+        flags: EPHEMERAL,
+      });
     }
 
     if (interaction.commandName === 'regelnachricht') {
       await interaction.channel.send(rulesMessage());
-      return interaction.reply({ content: 'Regelnachricht wurde erstellt.', ephemeral: true });
+      return interaction.reply({ content: 'Regelnachricht wurde erstellt.', flags: EPHEMERAL });
     }
 
     if (interaction.commandName === 'statusnachricht') {
@@ -334,19 +328,26 @@ client.on('interactionCreate', async interaction => {
       state.config.STATUS_CHANNEL_ID = interaction.channel.id;
       state.config.STATUS_MESSAGE_ID = message.id;
       saveConfig();
-      return interaction.reply({ content: 'Statusnachricht wurde erstellt und wird automatisch aktualisiert.', ephemeral: true });
+      return interaction.reply({ content: 'Statusnachricht wurde erstellt und wird automatisch aktualisiert.', flags: EPHEMERAL });
     }
 
     if (interaction.commandName === 'whitelist') {
       const minecraftName = interaction.options.getString('minecraft_name', true).trim();
-      if (!validMinecraftName(minecraftName)) return interaction.reply({ content: 'Der Minecraft-Name muss 3–16 Zeichen lang sein und darf nur Buchstaben, Zahlen und `_` enthalten.', ephemeral: true });
-      if (state.whitelist.some(entry => entry.discordId === interaction.user.id && entry.status === 'pending')) return interaction.reply({ content: 'Du hast bereits einen offenen Whitelist-Antrag.', ephemeral: true });
-      const request = { id: `${Date.now()}-${interaction.user.id}`, discordId: interaction.user.id, discordName: interaction.user.username, minecraftName, status: 'pending', createdAt: new Date().toISOString() };
+      if (!validMinecraftName(minecraftName)) return interaction.reply({ content: 'Der Minecraft-Name muss 3–16 Zeichen lang sein und darf nur Buchstaben, Zahlen und `_` enthalten.', flags: EPHEMERAL });
+      if (state.whitelist.some(entry => entry.discordId === interaction.user.id && entry.status === 'pending')) return interaction.reply({ content: 'Du hast bereits einen offenen Whitelist-Antrag.', flags: EPHEMERAL });
+      const request = {
+        id: `${Date.now()}-${interaction.user.id}`,
+        discordId: interaction.user.id,
+        discordName: interaction.user.username,
+        minecraftName,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+      };
       state.whitelist.push(request);
       writeJson('whitelist.json', state.whitelist);
       const channelId = configured('WHITELIST_CHANNEL_ID');
       const channel = channelId ? interaction.guild.channels.cache.get(channelId) : null;
-      if (!channel?.isTextBased()) return interaction.reply({ content: 'Der Whitelist-Teamkanal ist noch nicht eingerichtet.', ephemeral: true });
+      if (!channel?.isTextBased()) return interaction.reply({ content: 'Der Whitelist-Teamkanal ist noch nicht eingerichtet.', flags: EPHEMERAL });
       const embed = new EmbedBuilder().setColor(0xf1c40f).setTitle('📝 Neuer Whitelist-Antrag').addFields(
         { name: 'Discord', value: `<@${interaction.user.id}>`, inline: true },
         { name: 'Minecraft-Name', value: minecraftName, inline: true },
@@ -357,12 +358,17 @@ client.on('interactionCreate', async interaction => {
         new ButtonBuilder().setCustomId(`wl_reject:${request.id}`).setLabel('Ablehnen').setStyle(ButtonStyle.Danger),
       );
       await channel.send({ embeds: [embed], components: [row] });
-      return interaction.reply({ content: `Dein Whitelist-Antrag für **${minecraftName}** wurde gesendet.`, ephemeral: true });
+      return interaction.reply({ content: `Dein Whitelist-Antrag für **${minecraftName}** wurde gesendet.`, flags: EPHEMERAL });
     }
 
     if (interaction.commandName === 'hier-baue-ich') {
       const existing = state.projects.find(entry => entry.discordId === interaction.user.id && entry.status !== 'Abgeschlossen');
-      const project = existing || { id: `${Date.now()}-${interaction.user.id}`, discordId: interaction.user.id, discordName: interaction.user.username, createdAt: new Date().toISOString() };
+      const project = existing || {
+        id: `${Date.now()}-${interaction.user.id}`,
+        discordId: interaction.user.id,
+        discordName: interaction.user.username,
+        createdAt: new Date().toISOString(),
+      };
       project.project = interaction.options.getString('projekt', true);
       project.area = interaction.options.getString('bereich', true);
       project.status = interaction.options.getString('status') || 'In Arbeit';
@@ -371,7 +377,7 @@ client.on('interactionCreate', async interaction => {
       writeJson('projects.json', state.projects);
       const channelId = configured('PROJECT_CHANNEL_ID');
       const channel = channelId ? interaction.guild.channels.cache.get(channelId) : interaction.channel;
-      if (!channel?.isTextBased()) return interaction.reply({ content: 'Der Projektkanal ist noch nicht eingerichtet.', ephemeral: true });
+      if (!channel?.isTextBased()) return interaction.reply({ content: 'Der Projektkanal ist noch nicht eingerichtet.', flags: EPHEMERAL });
       const embed = new EmbedBuilder().setColor(0xd07b35).setTitle(`🏗️ ${project.project}`).setDescription(`Projekt von <@${interaction.user.id}>`).addFields(
         { name: 'Bereich', value: project.area, inline: true },
         { name: 'Status', value: project.status, inline: true },
@@ -386,25 +392,38 @@ client.on('interactionCreate', async interaction => {
         const oldMessage = oldChannel?.isTextBased() ? await oldChannel.messages.fetch(existing.messageId).catch(() => null) : null;
         if (oldMessage) {
           await oldMessage.edit({ embeds: [embed], components: [row] });
-          return interaction.reply({ content: 'Dein Projekt wurde aktualisiert.', ephemeral: true });
+          return interaction.reply({ content: 'Dein Projekt wurde aktualisiert.', flags: EPHEMERAL });
         }
       }
       const message = await channel.send({ embeds: [embed], components: [row] });
       project.channelId = channel.id;
       project.messageId = message.id;
       writeJson('projects.json', state.projects);
-      return interaction.reply({ content: 'Dein Projekt wurde eingetragen.', ephemeral: true });
+      return interaction.reply({ content: 'Dein Projekt wurde eingetragen.', flags: EPHEMERAL });
     }
 
     if (interaction.commandName === 'content') {
-      const item = { id: `${Date.now()}-${interaction.user.id}`, discordId: interaction.user.id, discordName: interaction.user.username, type: interaction.options.getString('typ', true), url: interaction.options.getString('link', true), createdAt: new Date().toISOString() };
-      try { new URL(item.url); } catch { return interaction.reply({ content: 'Bitte gib einen vollständigen gültigen Link an.', ephemeral: true }); }
+      const item = {
+        id: `${Date.now()}-${interaction.user.id}`,
+        discordId: interaction.user.id,
+        discordName: interaction.user.username,
+        type: interaction.options.getString('typ', true),
+        url: interaction.options.getString('link', true),
+        createdAt: new Date().toISOString(),
+      };
+      try { new URL(item.url); } catch { return interaction.reply({ content: 'Bitte gib einen vollständigen gültigen Link an.', flags: EPHEMERAL }); }
       state.content.push(item);
       writeJson('content.json', state.content);
       const channelId = configured('CONTENT_CHANNEL_ID');
       const channel = channelId ? interaction.guild.channels.cache.get(channelId) : interaction.channel;
-      if (channel?.isTextBased()) await channel.send({ embeds: [new EmbedBuilder().setColor(0x9b59b6).setTitle(`🎥 Neuer ${item.type}-Beitrag`).setDescription(`Von <@${interaction.user.id}>\n\n${item.url}`).setTimestamp()] });
-      return interaction.reply({ content: 'Dein Beitrag wurde veröffentlicht.', ephemeral: true });
+      if (channel?.isTextBased()) await channel.send({
+        embeds: [new EmbedBuilder()
+          .setColor(0x9b59b6)
+          .setTitle(`🎥 Neuer ${item.type}-Beitrag`)
+          .setDescription(`Von <@${interaction.user.id}>\n\n${item.url}`)
+          .setTimestamp()],
+      });
+      return interaction.reply({ content: 'Dein Beitrag wurde veröffentlicht.', flags: EPHEMERAL });
     }
 
     if (interaction.commandName === 'rollencheck') {
@@ -416,23 +435,67 @@ client.on('interactionCreate', async interaction => {
       if (!me.permissions.has(PermissionFlagsBits.SendMessages)) problems.push('❌ `Nachrichten senden` fehlt.');
       if (verified && me.roles.highest.comparePositionTo(verified) <= 0) problems.push('❌ Bot-Rolle liegt nicht über der Verifiziert-Rolle.');
       if (whitelist && me.roles.highest.comparePositionTo(whitelist) <= 0) problems.push('❌ Bot-Rolle liegt nicht über der Whitelist-Rolle.');
-      return interaction.reply({ embeds: [new EmbedBuilder().setColor(problems.length ? 0xc0392b : 0x35a854).setTitle(problems.length ? '⚠️ Rechteprüfung' : '✅ Rechteprüfung').setDescription(problems.length ? problems.join('\n') : 'Alle grundlegenden Berechtigungen sehen korrekt aus.')], ephemeral: true });
+      return interaction.reply({
+        embeds: [new EmbedBuilder()
+          .setColor(problems.length ? 0xc0392b : 0x35a854)
+          .setTitle(problems.length ? '⚠️ Rechteprüfung' : '✅ Rechteprüfung')
+          .setDescription(problems.length ? problems.join('\n') : 'Alle grundlegenden Berechtigungen sehen korrekt aus.')],
+        flags: EPHEMERAL,
+      });
+    }
+
+    if (interaction.commandName === 'ping') {
+      const sent = await interaction.reply({ content: 'Ping wird gemessen …', flags: EPHEMERAL, withResponse: true });
+      const interactionLatency = sent.resource?.message?.createdTimestamp
+        ? sent.resource.message.createdTimestamp - interaction.createdTimestamp
+        : 0;
+      return interaction.editReply(`🏓 Bot: **${interactionLatency} ms**\n🌐 Discord-WebSocket: **${Math.round(client.ws.ping)} ms**`);
+    }
+
+    if (interaction.commandName === 'hilfe') {
+      return interaction.reply({
+        embeds: [new EmbedBuilder()
+          .setColor(0x883232)
+          .setTitle(`📘 Planlos Create Bot – Hilfe v${VERSION}`)
+          .setDescription('Hier findest du alle aktuell verfügbaren Funktionen.')
+          .addFields(
+            { name: 'Community', value: '`/whitelist` – Whitelist-Antrag\n`/hier-baue-ich` – Bauprojekt melden\n`/content` – Content veröffentlichen' },
+            { name: 'Information', value: '`/botinfo` – Bot- und Serverdaten\n`/ping` – Reaktionszeit\n`/hilfe` – Diese Übersicht' },
+            { name: 'Administration', value: '`/setup` – Rollen und Kanäle einrichten\n`/regelnachricht` – Regelbutton senden\n`/statusnachricht` – Live-Status senden\n`/rollencheck` – Berechtigungen prüfen' },
+          )
+          .setFooter({ text: 'Planlos Create Community Core' })],
+        flags: EPHEMERAL,
+      });
     }
 
     if (interaction.commandName === 'botinfo') {
-      return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x883232).setTitle(`Planlos Create Bot v${VERSION}`).addFields(
-        { name: 'Discord', value: client.isReady() ? '🟢 Online' : '🔴 Offline', inline: true },
-        { name: 'Minecraft', value: state.minecraft.online ? '🟢 Online' : '🔴 Offline', inline: true },
-        { name: 'API-Port', value: String(process.env.API_PORT || 27051), inline: true },
-        { name: 'Projekte', value: String(state.projects.length), inline: true },
-        { name: 'Whitelist-Anträge', value: String(state.whitelist.length), inline: true },
-      )], ephemeral: true });
+      const guild = interaction.guild;
+      const uptimeSeconds = Math.floor(process.uptime());
+      const uptime = `${Math.floor(uptimeSeconds / 3600)}h ${Math.floor((uptimeSeconds % 3600) / 60)}m`;
+      return interaction.reply({
+        embeds: [new EmbedBuilder()
+          .setColor(0x883232)
+          .setTitle(`⚙️ Planlos Create Bot v${VERSION}`)
+          .setDescription('Community-, Whitelist-, Projekt- und Minecraft-Status-System.')
+          .addFields(
+            { name: 'Discord', value: client.isReady() ? '🟢 Online' : '🔴 Offline', inline: true },
+            { name: 'Minecraft', value: state.minecraft.online ? '🟢 Online' : '🔴 Offline', inline: true },
+            { name: 'Uptime', value: uptime, inline: true },
+            { name: 'Mitglieder', value: String(guild?.memberCount || 0), inline: true },
+            { name: 'Aktive Projekte', value: String(state.projects.filter(item => item.status !== 'Abgeschlossen').length), inline: true },
+            { name: 'Offene Whitelist-Anträge', value: String(state.whitelist.filter(item => item.status === 'pending').length), inline: true },
+            { name: 'API-Port', value: String(process.env.API_PORT || 27051), inline: true },
+            { name: 'Slash-Commands', value: String(commands.length), inline: true },
+          )
+          .setTimestamp()],
+        flags: EPHEMERAL,
+      });
     }
   } catch (error) {
     console.error('[DISCORD] Interaktionsfehler:', error);
     const message = 'Bei der Ausführung ist ein Fehler aufgetreten. Bitte prüfe die Bot-Logs.';
-    if (interaction.replied || interaction.deferred) await interaction.followUp({ content: message, ephemeral: true }).catch(() => {});
-    else await interaction.reply({ content: message, ephemeral: true }).catch(() => {});
+    if (interaction.replied || interaction.deferred) await interaction.followUp({ content: message, flags: EPHEMERAL }).catch(() => {});
+    else await interaction.reply({ content: message, flags: EPHEMERAL }).catch(() => {});
   }
 });
 
@@ -444,7 +507,10 @@ async function refreshMinecraftStatus() {
     return;
   }
   try {
-    const result = await status(host, Number(process.env.MINECRAFT_PORT || 25565), { timeout: 5000, enableSRV: true });
+    const result = await status(host, Number(process.env.MINECRAFT_PORT || 25565), {
+      timeout: 5000,
+      enableSRV: true,
+    });
     state.minecraft = {
       online: true,
       players: result.players.online,
@@ -454,8 +520,17 @@ async function refreshMinecraftStatus() {
       latency: result.roundTripLatency,
       updatedAt: new Date().toISOString(),
     };
-  } catch {
-    state.minecraft = { online: false, players: 0, maxPlayers: 0, version: null, motd: null, latency: null, updatedAt: new Date().toISOString() };
+  } catch (error) {
+    state.minecraft = {
+      online: false,
+      players: 0,
+      maxPlayers: 0,
+      version: null,
+      motd: null,
+      latency: null,
+      updatedAt: new Date().toISOString(),
+    };
+    console.warn(`[MINECRAFT] Statusabfrage fehlgeschlagen: ${error.message}`);
   }
   await updateStatusMessage();
 }
@@ -470,7 +545,13 @@ function startApi() {
     if (req.method === 'OPTIONS') return res.sendStatus(204);
     next();
   });
-  app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'planlos-create-bot', version: VERSION, uptime: process.uptime() }));
+  app.get('/api/health', (_req, res) => res.json({
+    ok: true,
+    service: 'planlos-create-bot',
+    version: VERSION,
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+  }));
   app.use('/api', (req, res, next) => {
     const expected = process.env.API_KEY;
     if (!expected || expected === 'change-me-to-a-long-random-secret') return res.status(503).json({ error: 'API_KEY ist nicht sicher konfiguriert.' });
@@ -481,19 +562,24 @@ function startApi() {
   app.get('/api/minecraft/status', (_req, res) => res.json(state.minecraft));
   app.get('/api/discord/stats', (_req, res) => {
     const guild = client.guilds.cache.get(process.env.GUILD_ID);
-    res.json({ members: guild?.memberCount || 0, botOnline: client.isReady(), botUser: client.user?.tag || null });
+    res.json({ members: guild?.memberCount || 0, botOnline: client.isReady(), botUser: client.user?.tag || null, version: VERSION });
   });
   app.get('/api/projects', (_req, res) => res.json(state.projects));
   app.get('/api/content', (_req, res) => res.json(state.content));
+  app.get('/api/whitelist', (_req, res) => res.json(state.whitelist));
   const port = Number(process.env.API_PORT || 27051);
   const host = process.env.API_HOST || '0.0.0.0';
   app.listen(port, host, () => console.log(`[API] Läuft auf http://${host}:${port}`));
 }
 
 (async () => {
+  console.log(`[START] Starte Planlos Create Bot v${VERSION} …`);
   await registerCommands();
   startApi();
-  setInterval(refreshMinecraftStatus, Math.max(30, Number(process.env.STATUS_INTERVAL_SECONDS || 60)) * 1000).unref();
+  setInterval(
+    refreshMinecraftStatus,
+    Math.max(30, Number(process.env.STATUS_INTERVAL_SECONDS || 60)) * 1000,
+  ).unref();
   await client.login(process.env.DISCORD_TOKEN);
 })().catch(error => {
   console.error('[START] Der Bot konnte nicht gestartet werden:', error);
