@@ -1,0 +1,21 @@
+{
+  "name": "planlos-create-bot",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Discord-Bot und API für den Planlos Create Server",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "discord.js": "^14.21.0",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "minecraft-server-util": "^5.4.4"
+  }
+}
