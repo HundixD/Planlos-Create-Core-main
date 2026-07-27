@@ -9,4 +9,5 @@ process.on('unhandledRejection', error => {
   console.error('[PROCESS] Unbehandelte Promise-Ablehnung:', error);
 });
 
+require('./bot/src/v0.6-addon.js');
 require('./bot/src/app-v0.5.js');
