@@ -13,39 +13,75 @@
       <nav>
         <button class="nav-item active" data-view="overview">Übersicht</button>
         <button class="nav-item" data-view="tickets">Tickets</button>
-        <button class="nav-item" data-view="whitelist">Whitelist</button>
-        <button class="nav-item" data-view="projects">Projekte</button>
+        <button class="nav-item" data-view="config">Konfiguration</button>
       </nav>
-      <div class="sidebar-footer">Webpanel <span id="version">v0.6.0</span></div>
+      <div class="sidebar-footer">Webpanel <span id="version">v0.7.0</span></div>
     </aside>
 
     <main>
       <header>
-        <div><h1>Community Dashboard</h1><p>Live-Daten aus dem Discord-Bot und dem Planlos Create Core.</p></div>
+        <div><h1 id="pageTitle">Community Dashboard</h1><p>Bot, Tickets, Rollen und Kanäle zentral verwalten.</p></div>
         <div class="status"><span></span><span id="connection">Nicht verbunden</span></div>
       </header>
 
       <section class="login" id="login">
-        <div><h2>Panel verbinden</h2><p>Trage deinen sicheren <code>PANEL_KEY</code> oder <code>API_KEY</code> ein. Der Schlüssel wird nur lokal in diesem Browser gespeichert.</p></div>
+        <div><h2>Panel verbinden</h2><p>Trage deinen sicheren <code>PANEL_KEY</code> ein. Er bleibt nur lokal in diesem Browser gespeichert.</p></div>
         <form id="loginForm"><input id="panelKey" type="password" placeholder="Panel-Schlüssel" autocomplete="current-password" required><button type="submit">Verbinden</button></form>
         <p class="error" id="error"></p>
       </section>
 
       <section id="dashboard" hidden>
-        <div class="stats">
-          <article><span>Offene Tickets</span><strong id="openTickets">0</strong><small id="ticketTotal">0 insgesamt</small></article>
-          <article><span>Whitelist</span><strong id="pendingWhitelist">0</strong><small>offene Anträge</small></article>
-          <article><span>Aktive Projekte</span><strong id="activeProjects">0</strong><small id="projectTotal">0 insgesamt</small></article>
-          <article><span>Archiv</span><strong id="closedTickets">0</strong><small>geschlossene Tickets</small></article>
-        </div>
+        <section class="view active" data-page="overview">
+          <div class="stats">
+            <article><span>Offene Tickets</span><strong id="openTickets">0</strong><small id="ticketTotal">0 insgesamt</small></article>
+            <article><span>Whitelist</span><strong id="pendingWhitelist">0</strong><small>offene Anträge</small></article>
+            <article><span>Aktive Projekte</span><strong id="activeProjects">0</strong><small id="projectTotal">0 insgesamt</small></article>
+            <article><span>Archiv</span><strong id="closedTickets">0</strong><small>geschlossene Tickets</small></article>
+          </div>
+          <div class="content-grid">
+            <section class="panel">
+              <div class="panel-head"><div><h2>Letzte Tickets</h2><p>Aktuelle und archivierte Support-Vorgänge.</p></div><button id="refresh">Aktualisieren</button></div>
+              <div class="table-wrap"><table><thead><tr><th>Status</th><th>Typ</th><th>Ticket-ID</th><th>Erstellt</th></tr></thead><tbody id="ticketRows"></tbody></table></div>
+            </section>
+            <aside class="panel activity"><h2>System</h2><dl><div><dt>Bot-Version</dt><dd id="systemVersion">–</dd></div><div><dt>Letztes Update</dt><dd id="updatedAt">–</dd></div><div><dt>API</dt><dd class="online">Verbunden</dd></div></dl><button id="logout" class="secondary">Verbindung trennen</button></aside>
+          </div>
+        </section>
 
-        <div class="content-grid">
+        <section class="view" data-page="tickets">
           <section class="panel">
-            <div class="panel-head"><div><h2>Letzte Tickets</h2><p>Aktuelle Vorgänge aus dem Support-System.</p></div><button id="refresh">Aktualisieren</button></div>
-            <div class="table-wrap"><table><thead><tr><th>Status</th><th>Typ</th><th>Ticket-ID</th><th>Erstellt</th></tr></thead><tbody id="ticketRows"></tbody></table></div>
+            <div class="panel-head"><div><h2>Ticket-Archiv</h2><p>Alle gespeicherten Tickets auf einen Blick.</p></div></div>
+            <div class="table-wrap"><table><thead><tr><th>Status</th><th>Typ</th><th>Ersteller</th><th>Übernommen von</th><th>Datum</th></tr></thead><tbody id="allTicketRows"></tbody></table></div>
           </section>
-          <aside class="panel activity"><h2>System</h2><dl><div><dt>Bot-Version</dt><dd id="systemVersion">–</dd></div><div><dt>Letztes Update</dt><dd id="updatedAt">–</dd></div><div><dt>API</dt><dd class="online">Verbunden</dd></div></dl><button id="logout" class="secondary">Verbindung trennen</button></aside>
-        </div>
+        </section>
+
+        <section class="view" data-page="config">
+          <form id="configForm" class="config-layout">
+            <section class="panel config-section"><div class="panel-head"><div><h2>Rollen</h2><p>Automatische Rollen und Support-Zugriff.</p></div></div>
+              <label>Verifiziert-Rolle<select name="VERIFIED_ROLE_ID" data-source="roles"></select></label>
+              <label>Whitelist-Rolle<select name="WHITELIST_ROLE_ID" data-source="roles"></select></label>
+              <label>Support-Rolle<select name="SUPPORT_ROLE_ID" data-source="roles"></select></label>
+            </section>
+            <section class="panel config-section"><div class="panel-head"><div><h2>Ticket-System</h2><p>Kategorie, Archiv und Ticket-Zugriff.</p></div></div>
+              <label>Ticket-Kategorie<select name="TICKET_CATEGORY_ID" data-source="categories"></select></label>
+              <label>Ticket-Archivkanal<select name="TICKET_LOG_CHANNEL_ID" data-source="textChannels"></select></label>
+            </section>
+            <section class="panel config-section"><div class="panel-head"><div><h2>Bot-Kanäle</h2><p>Logs, Projekte, Whitelist und Content.</p></div></div>
+              <label>Regel-Log<select name="RULES_LOG_CHANNEL_ID" data-source="textChannels"></select></label>
+              <label>Whitelist-Teamkanal<select name="WHITELIST_CHANNEL_ID" data-source="textChannels"></select></label>
+              <label>Projektkanal<select name="PROJECT_CHANNEL_ID" data-source="textChannels"></select></label>
+              <label>Bot-Log<select name="BOT_LOG_CHANNEL_ID" data-source="textChannels"></select></label>
+              <label>Content-Kanal<select name="CONTENT_CHANNEL_ID" data-source="textChannels"></select></label>
+              <label>Status-Kanal<select name="STATUS_CHANNEL_ID" data-source="textChannels"></select></label>
+            </section>
+            <section class="panel config-section"><div class="panel-head"><div><h2>Anzeige</h2><p>Panel-Name, Akzent und Serveradresse.</p></div></div>
+              <label>Panel-Titel<input name="PANEL_TITLE" placeholder="Planlos Create"></label>
+              <label>Akzentfarbe<input name="PANEL_ACCENT" type="color" value="#2f81f7"></label>
+              <label>Minecraft-Adresse<input name="MINECRAFT_DISPLAY_ADDRESS" placeholder="play.example.de"></label>
+              <label>Status-Nachrichten-ID<input name="STATUS_MESSAGE_ID" placeholder="Discord Nachrichten-ID"></label>
+            </section>
+            <div class="save-bar"><span id="saveStatus">Noch nicht gespeichert.</span><button type="submit">Konfiguration speichern</button></div>
+          </form>
+        </section>
       </section>
     </main>
   </div>
