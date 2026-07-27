@@ -5,4 +5,4 @@ require('dotenv').config({
   path: path.join(__dirname, 'bot', '.env'),
 });
 
-require('./bot/src/index.js');
+require('./bot/src/app.js');
